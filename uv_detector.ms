@@ -3,13 +3,11 @@
 
 struct UVDetector (
     
-    -- 检测孤立顶点
     fn detectLoneVertices obj unwrapMod = (
         local issues = #()
         local numVerts = polyOp.getNumVerts obj
         local uvUsed = #{}
         
-        -- 获取所有使用的UV顶点
         local numFaces = polyOp.getNumFaces obj
         for f = 1 to numFaces do (
             local uvVerts = unwrapMod.getMapFace 1 f
@@ -39,15 +37,12 @@ struct UVDetector (
         return issues
     ),
     
-    -- 检测UV壳间距
     fn detectShellSpacing obj unwrapMod = (
         local issues = #()
-        -- 注: 完整实现需要计算壳间距离
-        -- 这里返回空数组，实际项目中可通过遍历壳边界实现
+        -- 完整实现需要计算壳间距离
         return issues
     ),
     
-    -- 检测多重UV通道
     fn detectMultipleChannels obj = (
         local issues = #()
         local numChannels = meshOp.getNumMaps obj
@@ -68,9 +63,7 @@ struct UVDetector (
         return issues
     ),
     
-    -- 综合检测
     fn fullDetect obj = (
-        -- 确保有Unwrap修改器
         local unwrapMod = undefined
         for m in obj.modifiers where classOf m == Unwrap_UVW do (
             unwrapMod = m
@@ -80,8 +73,6 @@ struct UVDetector (
         if unwrapMod == undefined then return #()
         
         local allIssues = #()
-        
-        -- 执行各项检测
         local loneIssues = detectLoneVertices obj unwrapMod
         for i in loneIssues do append allIssues i
         
