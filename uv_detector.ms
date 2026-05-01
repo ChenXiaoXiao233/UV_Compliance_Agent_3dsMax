@@ -1,89 +1,110 @@
--- UV Detector Module
--- UV问题检测模块
+-- UV Fixer Module
+-- UV自动修复模块
 
-struct UVDetector (
+struct UVFixer (
     
-    fn detectLoneVertices obj unwrapMod = (
-        local issues = #()
-        local numVerts = polyOp.getNumVerts obj
-        local uvUsed = #{}
-        
-        local numFaces = polyOp.getNumFaces obj
-        for f = 1 to numFaces do (
-            local uvVerts = unwrapMod.getMapFace 1 f
-            for uv in uvVerts do (
-                uvUsed[uv+1] = true
-            )
+    fn fixFlippedUVs obj unwrapMod faceIDs = (
+        try (
+            unwrapMod.selectFaces faceIDs
+            unwrapMod.flipSelectedFaces()
+            unwrapMod.selectFaces #{}
+            return #(true, (faceIDs.numberSet as string) + " 个面已修复")
+        ) catch (
+            return #(false, (getCurrentException() as string))
         )
-        
-        local loneVerts = #{}
-        for v = 1 to numVerts do (
-            if not uvUsed[v] then loneVerts[v] = true
-        )
-        
-        if loneVerts.numberSet > 0 then (
-            local issue = #(
-                "UV-DET-001",
-                "INFO",
-                obj.name,
-                0,
-                "检测到 " + (loneVerts.numberSet as string) + " 个孤立UV顶点",
-                #("type", "lone_vertices", "vert_count", loneVerts.numberSet),
-                "建议: 在UV编辑器中删除未使用的顶点或使用'Clean'工具",
-                false
-            )
-            append issues issue
-        )
-        return issues
     ),
     
-    fn detectShellSpacing obj unwrapMod = (
-        local issues = #()
-        -- 完整实现需要计算壳间距离
-        return issues
-    ),
-    
-    fn detectMultipleChannels obj = (
-        local issues = #()
-        local numChannels = meshOp.getNumMaps obj
-        
-        if numChannels > 2 then (
-            local issue = #(
-                "UV-DET-002",
-                "WARNING",
-                obj.name,
-                0,
-                "检测到 " + (numChannels as string) + " 个UV通道",
-                #("type", "multiple_channels", "channel_count", numChannels),
-                "建议: 删除不需要的UV通道以减少文件大小",
-                true
-            )
-            append issues issue
+    fn fixOutOfRange obj unwrapMod = (
+        try (
+            local numFaces = polyOp.getNumFaces obj
+            unwrapMod.normalizeMap #{1..numFaces}
+            return #(true, "UV已归一化到[0,1]空间")
+        ) catch (
+            return #(false, (getCurrentException() as string))
         )
-        return issues
     ),
     
-    fn fullDetect obj = (
+    fn fixStretchedUVs obj unwrapMod faceIDs = (
+        try (
+            unwrapMod.selectFaces faceIDs
+            unwrapMod.relaxSelectedFaces 0.5
+            unwrapMod.selectFaces #{}
+            return #(true, (faceIDs.numberSet as string) + " 个面已放松")
+        ) catch (
+            return #(false, (getCurrentException() as string))
+        )
+    ),
+    
+    fn packUVShells obj unwrapMod = (
+        try (
+            local numFaces = polyOp.getNumFaces obj
+            unwrapMod.packMapFaces #{1..numFaces} (1) 0.005
+            return #(true, "UV壳已重新打包")
+        ) catch (
+            return #(false, (getCurrentException() as string))
+        )
+    ),
+    
+    fn fixIssue obj issue = (
+        local objNode = getNodeByName obj.name
+        if objNode == undefined then return #(false, "物体不存在")
+        
         local unwrapMod = undefined
-        for m in obj.modifiers where classOf m == Unwrap_UVW do (
+        for m in objNode.modifiers where classOf m == Unwrap_UVW do (
             unwrapMod = m
             exit
         )
         
-        if unwrapMod == undefined then return #()
+        if unwrapMod == undefined then return #(false, "没有Unwrap UVW修改器")
         
-        local allIssues = #()
-        local loneIssues = detectLoneVertices obj unwrapMod
-        for i in loneIssues do append allIssues i
+        local issueType = undefined
+        for i = 1 to issue[6].count by 2 where issue[6][i] == "type" do (
+            issueType = issue[6][i+1]
+            exit
+        )
         
-        local spacingIssues = detectShellSpacing obj unwrapMod
-        for i in spacingIssues do append allIssues i
+        case issueType of (
+            "flipped_uv": (
+                local faceIDs = undefined
+                for i = 1 to issue[6].count by 2 where issue[6][i] == "face_ids" do (
+                    faceIDs = issue[6][i+1] as bitarray
+                    exit
+                )
+                if faceIDs != undefined then
+                    return fixFlippedUVs objNode unwrapMod faceIDs
+            )
+            "out_of_range": (
+                return fixOutOfRange objNode unwrapMod
+            )
+            "stretched": (
+                local faceIDs = undefined
+                for i = 1 to issue[6].count by 2 where issue[6][i] == "face_ids" do (
+                    faceIDs = issue[6][i+1] as bitarray
+                    exit
+                )
+                if faceIDs != undefined then
+                    return fixStretchedUVs objNode unwrapMod faceIDs
+            )
+            default: return #(false, "未知问题类型")
+        )
+        return #(false, "无法识别的问题类型")
+    ),
+    
+    fn fixAllIssues obj issues = (
+        local successCount = 0
+        local failCount = 0
+        local results = #()
         
-        local channelIssues = detectMultipleChannels obj
-        for i in channelIssues do append allIssues i
-        
-        return allIssues
+        for issue in issues do (
+            local result = fixIssue obj issue
+            if result[1] then
+                successCount += 1
+            else
+                failCount += 1
+            append results result
+        )
+        return #(successCount, failCount, results)
     )
 )
 
-global uvDetector = UVDetector()
+global uvFixer = UVFixer()
