@@ -79,7 +79,6 @@ struct UVComplianceAgent (
     fn detectOverlaps obj unwrapMod = (
         local issues = #()
         
-        -- 使用selectOverlappedFaces方法检测重叠
         unwrapMod.selectOverlappedFaces()
         local overlappedFaces = unwrapMod.getSelectedFaces()
         local overlapCount = overlappedFaces.numberSet
@@ -98,8 +97,7 @@ struct UVComplianceAgent (
             append issues issue
         )
         
-        -- 清除选择
-        unwrapMod.selectFaces #{} 
+        unwrapMod.selectFaces #{}
         return issues
     ),
     
@@ -108,7 +106,6 @@ struct UVComplianceAgent (
         local issues = #()
         local numFaces = polyOp.getNumFaces obj
         
-        -- 获取UV边界
         unwrapMod.getArea #{1..numFaces} &uvX &uvY &uvWidth &uvHeight &uvFaceArea &objArea
         
         if uvWidth > 1.0 or uvHeight > 1.0 then (
@@ -135,7 +132,7 @@ struct UVComplianceAgent (
         
         for f = 1 to numFaces do (
             local area3D = getFaceArea3D obj f
-            local areaUV = abs (getUVArea unwrapMod f)  -- 取绝对值
+            local areaUV = abs (getUVArea unwrapMod f)
             if area3D > 0 and areaUV > 0 then (
                 local ratio = areaUV / area3D
                 append ratios ratio
@@ -144,7 +141,6 @@ struct UVComplianceAgent (
             )
         )
         
-        -- 计算平均ratio
         local validRatios = for r in ratios where r > 0 collect r
         if validRatios.count > 0 then (
             local avgRatio = (for r in validRatios sum r) / validRatios.count
@@ -193,20 +189,60 @@ struct UVComplianceAgent (
         return issues
     ),
     
-    -- 获取UV岛信息
+    -- 获取UV岛（使用边邻接泛洪填充）
     fn getUVShells unwrapMod = (
-        -- 获取所有面，使用连通性检测UV岛
         local numFaces = unwrapMod.getNumFaces()
+        if numFaces == 0 then return #()
+        
+        local adjacency = #()
+        for i = 1 to numFaces do adjacency[i] = #{}
+        
+        local edgeFaceMap = #()
+        for i = 1 to numFaces do (
+            local edges = unwrapMod.getEdges i
+            for e in edges do (
+                local key = e as string
+                if edgeFaceMap[key] == undefined then
+                    edgeFaceMap[key] = #{i}
+                else
+                    edgeFaceMap[key] += #{i}
+            )
+        )
+        
+        for key in edgeFaceMap.keys do (
+            local faceSet = edgeFaceMap[key]
+            if faceSet.numberSet == 2 then (
+                local f1 = (faceSet as array)[1]
+                local f2 = (faceSet as array)[2]
+                adjacency[f1] += #{f2}
+                adjacency[f2] += #{f1}
+            )
+        )
+        
         local visited = #{}
         local shells = #()
         
-        -- 简化实现：假设每个连续区域是一个壳
-        local faceIndices = for i = 1 to numFaces collect i
-        local currentShell = #{}
-        
-        -- 注：完整实现需要建立UV邻接图
-        -- 这里返回一个包含所有面的单个壳
-        append shells #{1..numFaces}
+        for face = 1 to numFaces do (
+            if not visited[face] then (
+                local shell = #{}
+                local queue = #(face)
+                visited[face] = true
+                
+                while queue.count > 0 do (
+                    local current = queue[1]
+                    deleteItem queue 1
+                    shell[current] = true
+                    
+                    for neighbor in adjacency[current] do (
+                        if not visited[neighbor] then (
+                            visited[neighbor] = true
+                            append queue neighbor
+                        )
+                    )
+                )
+                append shells shell
+            )
+        )
         return shells
     ),
     
@@ -218,7 +254,6 @@ struct UVComplianceAgent (
             return undefined
         )
         
-        -- 检查是否有Unwrap UVW修改器，没有则添加
         local unwrapMod = undefined
         for m in obj.modifiers where classOf m == Unwrap_UVW do (
             unwrapMod = m
@@ -230,27 +265,20 @@ struct UVComplianceAgent (
             addModifier obj unwrapMod
         )
         
-        -- 执行各项检测
-        local report = #()
         local allIssues = #()
         
-        -- 1. 检测翻转
         local flippedIssues = detectFlippedUVs obj unwrapMod
         for issue in flippedIssues do append allIssues issue
         
-        -- 2. 检测重叠
         local overlapIssues = detectOverlaps obj unwrapMod
         for issue in overlapIssues do append allIssues issue
         
-        -- 3. 检测超出范围
         local rangeIssues = detectOutOfRange obj unwrapMod
         for issue in rangeIssues do append allIssues issue
         
-        -- 4. 检测拉伸
         local stretchIssues = detectStretchedUVs obj unwrapMod
         for issue in stretchIssues do append allIssues issue
         
-        -- 构建报告
         local reportStruct = #(
             objName,
             allIssues.count,
@@ -260,7 +288,6 @@ struct UVComplianceAgent (
         
         reportCache = #(reportStruct)
         
-        -- 输出结果
         format "\n========================================\n"
         format "UV合规性报告 - %\n" objName
         format "========================================\n"
@@ -283,7 +310,6 @@ struct UVComplianceAgent (
         local obj = getNodeByName objName
         if obj == undefined then return #(false, "物体不存在")
         
-        -- 获取Unwrap修改器
         local unwrapMod = undefined
         for m in obj.modifiers where classOf m == Unwrap_UVW do (
             unwrapMod = m
@@ -299,14 +325,12 @@ struct UVComplianceAgent (
             
             case issueType of (
                 "flipped_uv": (
-                    -- 获取翻转的面并翻转
                     local faceIDs = (for i = 1 to issue[6].count by 2 where issue[6][i] == "face_ids" collect issue[6][i+1])[1]
                     unwrapMod.selectFaces (faceIDs as bitarray)
                     unwrapMod.flipSelectedFaces()
                     fixedCount += 1
                 )
                 "out_of_range": (
-                    -- 归一化UV
                     local numFaces = polyOp.getNumFaces obj
                     unwrapMod.normalizeMap #{1..numFaces}
                     fixedCount += 1
@@ -319,7 +343,7 @@ struct UVComplianceAgent (
         return #(true, fixedCount)
     ),
     
-    -- 选择有问题的UV
+    -- 选择问题UV
     fn selectInvalidUVs report = (
         local objName = report[1]
         local obj = getNodeByName objName
@@ -344,11 +368,11 @@ struct UVComplianceAgent (
         )
         
         unwrapMod.selectFaces allFaces
-        subObjectLevel = 3  -- 切换到面级别
+        subObjectLevel = 3
         return true
     ),
     
-    -- 生成文本报告（供LLM使用）
+    -- 生成文本报告
     fn generateTextReport report = (
         local str = ""
         str += "========================================\n"
@@ -376,16 +400,14 @@ struct UVComplianceAgent (
         
         local reports = #()
         for obj in selection do (
-            if obj != undefined and classOf obj == Editable_Poly or classOf obj == PolyMeshObject then (
+            if obj != undefined and (classOf obj == Editable_Poly or classOf obj == PolyMeshObject) then (
                 local report = scanObject obj.name
                 if report != undefined then append reports report
             )
         )
-        
         return reports
     )
 )
 
--- 创建全局实例
 global uvComplianceAgent = UVComplianceAgent()
 format "UV Compliance Agent 已加载\n"
